@@ -167,11 +167,72 @@ client.on("guildMemberRemove", async (member) => {
 
 
 // ========================
+// FUNÇÃO → LIMPAR TODAS AS MENSAGENS
+// ========================
+async function limparMensagens(guild) {
+    console.log("🧹 A limpar todas as metas...");
+
+    // 1 — limpar canal META
+    const metaChannel = guild.channels.cache.get(META_CHANNEL_ID);
+    if (metaChannel) {
+        const msgs = await metaChannel.messages.fetch({ limit: 100 });
+        await metaChannel.bulkDelete(msgs);
+        console.log("✔️ Canal META limpo");
+    }
+
+    // 2 — limpar canais individuais
+    const canais = guild.channels.cache.filter(
+        c => c.parentId === CATEGORY_ID && c.type === 0
+    );
+
+    for (const canal of canais.values()) {
+        try {
+            const msgs = await canal.messages.fetch({ limit: 100 });
+            await canal.bulkDelete(msgs);
+            console.log(`✔️ Limpo: ${canal.name}`);
+        } catch (err) {
+            console.log(`❌ Erro ao limpar ${canal.name}:`, err);
+        }
+    }
+
+    console.log("🧹✨ Todas as metas foram apagadas!");
+}
+
+
+// ========================
+// EVENTO → DETETAR !limpar
+// ========================
+client.on("messageCreate", async (msg) => {
+    if (msg.author.bot) return;
+    if (msg.channel.id !== META_CHANNEL_ID) return;
+
+    // comando não é limpar → ignorar
+    if (msg.content.toLowerCase() !== "!limpar") return;
+
+    // verificar permissões
+    const member = msg.member;
+    const temChefe = member.roles.cache.some(r => r.name === ROLE_CHEFE);
+    const temSub = member.roles.cache.some(r => r.name === ROLE_SUBCHEFE);
+
+    if (!temChefe && !temSub) {
+        msg.reply("❌ Não tens permissão para usar este comando.");
+        return;
+    }
+
+    // executar limpeza
+    await limparMensagens(msg.guild);
+
+    msg.channel.send("🧹 Mensagens de **todas as metas** foram apagadas com sucesso!");
+});
+
+
+// ========================
 // EVENTO → NOVA META ENVIADA
 // ========================
 client.on("messageCreate", async (msg) => {
     if (msg.author.bot) return;
     if (msg.channel.id !== META_CHANNEL_ID) return;
+    if (msg.content.toLowerCase() === "!limpar") return;
 
     console.log("📩 Meta recebida, distribuindo…");
 
