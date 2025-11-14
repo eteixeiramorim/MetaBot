@@ -1,215 +1,160 @@
-// --- Fix para Render: servidor HTTP mínimo ---
+// ----------------------
+// FIX PARA O RENDER (HTTP SERVER KEEP-ALIVE)
+// ----------------------
 const http = require("http");
 http.createServer((req, res) => res.end("Bot ativo")).listen(process.env.PORT || 3000);
 
-console.log("index.js carregado — Render está a correr!");
+// ----------------------
+// DISCORD BOT CONFIG
+// ----------------------
+const { Client, GatewayIntentBits, Partials, PermissionsBitField } = require("discord.js");
+require("dotenv").config();
 
-// Discord.js imports
-const {
-    Client,
-    GatewayIntentBits,
-    ChannelType,
-    PermissionsBitField
-} = require("discord.js");
-
-const schedule = require("node-schedule");
-
-// Criar client com intents necessárias
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent
-    ]
+    ],
+    partials: [Partials.Message, Partials.Channel, Partials.GuildMember]
 });
 
-// IDs do servidor
-const ROLE_TRIGGER = "1423052122936573992"; // Império Oculto
+// ----------------------
+// IDs DEFINIDOS POR TI
+// ----------------------
+const ROLE_IMPERIO = "1423052122936573992"; // Cargo que cria canal
 const ROLE_CHEFE = "1422984664812884168";  // Chefe
 const ROLE_SUBCHEFE = "1422986843074592928"; // Subchefe
-const CATEGORY_META = "1431402444956369037"; // Categoria: Meta individual
-const META_CHANNEL_ID = "1438929907215499488"; // Canal META
 
-// Quando o bot inicia
-client.on("ready", () => {
-    console.log(`Bot online como ${client.user.tag}`);
+const CATEGORY_ID = "1438935701973368884"; // 🎯 Meta Individual (nova)
+const META_CHANNEL_ID = "1438936038050500772"; // Canal meta (novo)
+
+// ----------------------
+// BOT ONLINE
+// ----------------------
+client.once("ready", () => {
+    console.log(`🔥 Bot online como ${client.user.tag}`);
 });
 
-
-// ===============================================================
-// Criar canal automático quando o user recebe o cargo Império Oculto
-// ===============================================================
-
-client.on("guildMemberUpdate", async (oldMember, newMember) => {
-    try {
-        const ganhouCargo =
-            !oldMember.roles.cache.has(ROLE_TRIGGER) &&
-            newMember.roles.cache.has(ROLE_TRIGGER);
-
-        if (!ganhouCargo) return;
-
-        console.log("Trigger detectado: criando canal de metas.");
-
-        const guild = newMember.guild;
-        const categoria = guild.channels.cache.get(CATEGORY_META);
-
-        if (!categoria) {
-            console.log("Categoria de metas não encontrada.");
-            return;
-        }
-
-        const canal = await guild.channels.create({
-            name: newMember.user.username.toLowerCase(),
-            type: ChannelType.GuildText,
-            parent: CATEGORY_META,
-            permissionOverwrites: [
-                {
-                    id: guild.id,
-                    deny: [PermissionsBitField.Flags.ViewChannel]
-                },
-                {
-                    id: newMember.id,
-                    allow: [
-                        PermissionsBitField.Flags.ViewChannel,
-                        PermissionsBitField.Flags.SendMessages
-                    ]
-                },
-                { id: ROLE_CHEFE, allow: [PermissionsBitField.Flags.ViewChannel] },
-                { id: ROLE_SUBCHEFE, allow: [PermissionsBitField.Flags.ViewChannel] }
-            ]
-        });
-
-        console.log(`Canal criado: ${canal.name}`);
-
-        const mensagem = await canal.send(
-            "Bem-vindo ao teu canal individual de metas.\n" +
-            "A partir daqui o Chefe e Subchefe vão acompanhar o teu progresso."
-        );
-
-        await mensagem.pin();
-    } catch (erro) {
-        console.log("Erro ao criar canal automático:", erro);
-    }
-});
-
-
-// ===============================================================
-// Sistema de enviar metas para todos os canais individuais
-// ===============================================================
-
-client.on("messageCreate", async (message) => {
-    if (message.author.bot) return;
-
-    // Apenas o canal de metas
-    if (message.channel.id !== META_CHANNEL_ID) return;
-
-    // Apenas chefes
-    if (
-        !message.member.roles.cache.has(ROLE_CHEFE) &&
-        !message.member.roles.cache.has(ROLE_SUBCHEFE)
-    ) {
-        return message.reply("Apenas o Chefe ou Subchefe podem enviar metas.");
-    }
-
-    console.log("Meta nova recebida. Distribuindo...");
-
-    const guild = message.guild;
-    const categoria = guild.channels.cache.get(CATEGORY_META);
+// ----------------------
+// FUNÇÃO → Criar canal individual
+// ----------------------
+async function criarCanalIndividual(member) {
+    const guild = member.guild;
+    const categoria = guild.channels.cache.get(CATEGORY_ID);
 
     if (!categoria) {
-        console.log("Categoria de metas não encontrada.");
+        console.log("❌ Categoria não encontrada!");
         return;
     }
 
-    const texto = message.content;
-    const anexos = message.attachments.map(a => a.url);
+    const nomeCanal = member.user.username.toLowerCase().replace(/[^a-z0-9]/g, "-");
 
-    // Buscar canais que pertencem à categoria
-    const canais = guild.channels.cache.filter(
-        ch => ch.parentId === CATEGORY_META && ch.type === ChannelType.GuildText
-    );
-
-    console.log("Canais individuais encontrados:", canais.size);
-
-    for (const canal of canais.values()) {
-
-        // Identificar o dono do canal pelo nome
-        const membro = guild.members.cache.find(
-            m => m.user.username.toLowerCase() === canal.name.toLowerCase()
-        );
-
-        const mencao = membro ? `<@${membro.id}>` : "";
-
-        try {
-            await canal.send({
-                content: `Nova meta enviada.\n${mencao}\n\n${texto}`,
-                files: anexos
-            });
-
-            console.log(`Meta enviada para: ${canal.name}`);
-
-        } catch (erro) {
-            console.log(`Erro ao enviar para ${canal.name}:`, erro);
-        }
-    }
-
-    await message.channel.send("Meta enviada para todos os canais individuais.");
-});
-
-
-// ===============================================================
-// Remover canal quando o member sai
-// ===============================================================
-
-client.on("guildMemberRemove", async (member) => {
     try {
-        console.log(`O membro ${member.user.username} saiu. Removendo canal...`);
-
-        const guild = member.guild;
-
-        const canal = guild.channels.cache.find(
-            ch => ch.parentId === CATEGORY_META &&
-            ch.name === member.user.username.toLowerCase()
-        );
-
-        if (canal) {
-            await canal.delete().catch(() => {});
-            console.log("Canal removido com sucesso.");
-        }
-    } catch (erro) {
-        console.log("Erro ao remover canal:", erro);
-    }
-});
-
-
-// ===============================================================
-// Limpeza semanal (domingo 01:00)
-// ===============================================================
-
-schedule.scheduleJob("0 1 * * 0", async () => {
-    try {
-        const guild = client.guilds.cache.first();
-        const categoria = guild.channels.cache.get(CATEGORY_META);
-
-        if (!categoria) return;
-
-        categoria.children?.cache?.forEach(async (canal) => {
-            if (canal.type === ChannelType.GuildText) {
-                const mensagens = await canal.messages.fetch();
-                await canal.bulkDelete(mensagens, true);
-            }
+        const canal = await guild.channels.create({
+            name: nomeCanal,
+            type: 0, // Texto
+            parent: CATEGORY_ID,
+            permissionOverwrites: [
+                { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+                { id: member.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
+                { id: ROLE_CHEFE, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
+                { id: ROLE_SUBCHEFE, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
+                { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageChannels] }
+            ]
         });
 
-        console.log("Limpeza semanal concluída.");
-    } catch (erro) {
-        console.log("Erro na limpeza semanal:", erro);
+        console.log(`✅ Canal criado: ${canal.name}`);
+        return canal;
+
+    } catch (err) {
+        console.log("❌ Erro ao criar canal:", err);
+    }
+}
+
+// ----------------------
+// FUNÇÃO → Apagar canal individual
+// ----------------------
+async function apagarCanal(member) {
+    const guild = member.guild;
+    const nomeCanal = member.user.username.toLowerCase().replace(/[^a-z0-9]/g, "-");
+
+    const canal = guild.channels.cache.find(c =>
+        c.parentId === CATEGORY_ID &&
+        c.name === nomeCanal
+    );
+
+    if (!canal) return;
+
+    try {
+        await canal.delete();
+        console.log(`🗑️ Canal removido: ${nomeCanal}`);
+    } catch (err) {
+        console.log("❌ Erro ao remover canal:", err);
+    }
+}
+
+// ----------------------
+// QUANDO O CARGO É ADICIONADO
+// ----------------------
+client.on("guildMemberUpdate", async (oldMember, newMember) => {
+    const tinha = oldMember.roles.cache.has(ROLE_IMPERIO);
+    const tem = newMember.roles.cache.has(ROLE_IMPERIO);
+
+    if (!tinha && tem) {
+        console.log(`📌 Cargo Império atribuído a ${newMember.user.username}`);
+        criarCanalIndividual(newMember);
+    }
+
+    if (tinha && !tem) {
+        console.log(`📌 Cargo Império removido de ${newMember.user.username}`);
+        apagarCanal(newMember);
     }
 });
 
+// ----------------------
+// FUNÇÃO → Enviar meta para todos canais individuais
+// ----------------------
+async function enviarMetaParaTodos(guild, conteudo, anexo) {
+    const canais = guild.channels.cache.filter(c => c.parentId === CATEGORY_ID && c.id !== META_CHANNEL_ID);
 
-// ===============================================================
+    for (const canal of canais.values()) {
+        try {
+            await canal.send({
+                content: `📌 **Nova meta enviada por ${conteudo.autor}!**\n\n${conteudo.texto}`,
+                files: anexo ? [anexo] : []
+            });
+
+            console.log(`➡️ Meta enviada para: ${canal.name}`);
+        } catch (err) {
+            console.log(`❌ Erro no canal ${canal.name}:`, err.message);
+        }
+    }
+}
+
+// ----------------------
+// DETEÇÃO DE NOVA META
+// ----------------------
+client.on("messageCreate", async (msg) => {
+    if (msg.channel.id !== META_CHANNEL_ID) return;
+    if (msg.author.bot) return;
+
+    const conteudo = {
+        autor: msg.author.username,
+        texto: msg.content || ""
+    };
+
+    const anexo = msg.attachments.first() ? msg.attachments.first().url : null;
+
+    console.log("📨 Nova meta capturada, enviando para todos os canais...");
+
+    await enviarMetaParaTodos(msg.guild, conteudo, anexo);
+
+    await msg.channel.send("✅ Meta enviada para todos os canais individuais.");
+});
+
+// ----------------------
 // LOGIN DO BOT
-// ===============================================================
-
+// ----------------------
 client.login(process.env.TOKEN);
