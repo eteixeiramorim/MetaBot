@@ -2,6 +2,9 @@
 const http = require("http");
 http.createServer((req, res) => res.end("Bot ativo")).listen(process.env.PORT || 3000);
 
+console.log("📌 index.js carregado — Render está a correr!");
+
+// Discord.js imports
 const {
     Client,
     GatewayIntentBits,
@@ -10,6 +13,7 @@ const {
 } = require("discord.js");
 const schedule = require("node-schedule");
 
+// Criar client com intents necessárias
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -18,25 +22,39 @@ const client = new Client({
     ]
 });
 
-// ---------------- CONFIGURAÇÃO ----------------
+// IDs necessárias
 const ROLE_TRIGGER = "1423052122936573992"; // Império Oculto 🕵
-const ROLE_CHEFE = "1422984664812884168";   // 👑 Chefe — O Soberano Oculto
-const ROLE_SUBCHEFE = "1422986843074592928"; // 🦍 Subchefe — O Guardião da Coroa
+const ROLE_CHEFE = "1422984664812884168";   // 👑 Chefe
+const ROLE_SUBCHEFE = "1422986843074592928"; // 🦍 Subchefe
 const CATEGORY_META = "1431402444956369037"; // 🎯 Meta individual
-// ----------------------------------------------
 
+// Quando o bot liga
+client.on("ready", () => {
+    console.log(`🟢 Bot online como ${client.user.tag}`);
+});
 
-// 📌 Quando alguém recebe o cargo → criar canal
+// DEBUG — ver mudanças de cargo
 client.on("guildMemberUpdate", async (oldMember, newMember) => {
+    console.log("⚠️ EVENTO DISPARADO: guildMemberUpdate");
+    console.log("ANTES:", oldMember.roles.cache.map(r => r.id));
+    console.log("DEPOIS:", newMember.roles.cache.map(r => r.id));
+
+    // Se o user ganhou o cargo Império Oculto
     if (
         !oldMember.roles.cache.has(ROLE_TRIGGER) &&
         newMember.roles.cache.has(ROLE_TRIGGER)
     ) {
+        console.log("📌 Cargo Império Oculto DETETADO! Criando canal...");
+
         const guild = newMember.guild;
         const categoria = guild.channels.cache.get(CATEGORY_META);
 
-        if (!categoria) return console.log("Categoria não encontrada!");
+        if (!categoria) {
+            console.log("❌ Categoria não encontrada!");
+            return;
+        }
 
+        // Criar canal
         const canal = await guild.channels.create({
             name: newMember.user.username.toLowerCase(),
             type: ChannelType.GuildText,
@@ -64,7 +82,9 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
             ],
         });
 
-        // 📌 Mensagem fixa automática
+        console.log(`✅ Canal criado: ${canal.name}`);
+
+        // Mensagem fixa
         const mensagem = await canal.send(
 `⚔️ **Bem-vindo ao teu canal de metas, ${newMember.user.username}!**
 
@@ -75,14 +95,15 @@ Qualquer dúvida, chama.`
         );
 
         await mensagem.pin();
+        console.log("📌 Mensagem fixa enviada e marcada.");
     }
 });
 
-
-// 📌 Quando o membro sair → apagar o canal correspondente
+// Remover canal quando o membro sai
 client.on("guildMemberRemove", async (member) => {
-    const guild = member.guild;
+    console.log(`⚠️ ${member.user.username} saiu — verificando canal...`);
 
+    const guild = member.guild;
     const canal = guild.channels.cache.find(
         (ch) =>
             ch.parentId === CATEGORY_META &&
@@ -91,11 +112,11 @@ client.on("guildMemberRemove", async (member) => {
 
     if (canal) {
         await canal.delete().catch(() => {});
+        console.log("🗑️ Canal apagado.");
     }
 });
 
-
-// 📌 Limpar mensagens todos os domingos às 01:00
+// Limpar mensagens todos os domingos às 01:00
 schedule.scheduleJob("0 1 * * 0", async () => {
     const guild = client.guilds.cache.first();
     const categoria = guild.channels.cache.get(CATEGORY_META);
@@ -109,9 +130,8 @@ schedule.scheduleJob("0 1 * * 0", async () => {
         }
     });
 
-    console.log("Conversas limpas na categoria Meta Individual.");
+    console.log("✨ Conversas limpas na categoria Meta Individual.");
 });
 
-
-// LOGIN (Render usa variável TOKEN)
+// Login com token do Render
 client.login(process.env.TOKEN);
