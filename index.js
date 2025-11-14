@@ -52,6 +52,7 @@ const META_CHANNEL_ID = "1438936038050500772";
 // ========================
 client.once("ready", () => {
     console.log(`🤖 Bot online como ${client.user.tag}`);
+    iniciarLimpezaSemanal();
 });
 
 
@@ -85,11 +86,11 @@ async function criarCanal(member) {
         parent: CATEGORY_ID,
         permissionOverwrites: [
             {
-                id: guild.id, // todos
+                id: guild.id,
                 deny: [PermissionsBitField.Flags.ViewChannel]
             },
             {
-                id: member.id, // dono do canal
+                id: member.id,
                 allow: [PermissionsBitField.Flags.ViewChannel],
                 deny: [PermissionsBitField.Flags.SendMessages]
             },
@@ -200,17 +201,16 @@ async function limparMensagens(guild) {
 
 
 // ========================
-// EVENTO → DETETAR !limpar
+// EVENTO → COMANDO !limpar
 // ========================
 client.on("messageCreate", async (msg) => {
     if (msg.author.bot) return;
     if (msg.channel.id !== META_CHANNEL_ID) return;
 
-    // comando não é limpar → ignorar
     if (msg.content.toLowerCase() !== "!limpar") return;
 
-    // verificar permissões
     const member = msg.member;
+
     const temChefe = member.roles.cache.some(r => r.name === ROLE_CHEFE);
     const temSub = member.roles.cache.some(r => r.name === ROLE_SUBCHEFE);
 
@@ -219,10 +219,8 @@ client.on("messageCreate", async (msg) => {
         return;
     }
 
-    // executar limpeza
     await limparMensagens(msg.guild);
-
-    msg.channel.send("🧹 Mensagens de **todas as metas** foram apagadas com sucesso!");
+    msg.channel.send("🧹 Todas as metas foram apagadas manualmente!");
 });
 
 
@@ -257,6 +255,42 @@ client.on("messageCreate", async (msg) => {
 
     await msg.channel.send("✔️ Meta enviada para todos os canais individuais!");
 });
+
+
+// ========================
+// LIMPEZA AUTOMÁTICA SEMANAL
+// ========================
+function iniciarLimpezaSemanal() {
+
+    setInterval(async () => {
+
+        const agora = new Date();
+
+        const dia = agora.getUTCDay(); // Domingo = 0
+        const hora = agora.getUTCHours();
+        const minuto = agora.getUTCMinutes();
+
+        // Portugal:
+        // - Inverno: UTC+0 → 01:00 PT = 01:00 UTC
+        // - Verão: UTC+1 → 01:00 PT = 00:00 UTC
+        const horarioDeVerao = agora.getTimezoneOffset() !== 0;
+
+        const alvoUTC = horarioDeVerao ? 0 : 1;
+
+        if (dia === 0 && hora === alvoUTC && minuto === 0) {
+
+            const guild = client.guilds.cache.first();
+            if (!guild) return;
+
+            console.log("🕐 Execução automática da limpeza semanal...");
+
+            await limparMensagens(guild);
+
+            console.log("🧹 Limpeza semanal concluída!");
+        }
+
+    }, 60 * 1000); // verifica a cada 1 minuto
+}
 
 
 // ========================
