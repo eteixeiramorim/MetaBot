@@ -1,3 +1,7 @@
+// --- Fix para Render: servidor HTTP mínimo ---
+const http = require("http");
+http.createServer((req, res) => res.end("Bot ativo")).listen(process.env.PORT || 3000);
+
 const {
     Client,
     GatewayIntentBits,
@@ -109,5 +113,5 @@ schedule.scheduleJob("0 1 * * 0", async () => {
 });
 
 
-// LOGIN
+// LOGIN (Render usa variável TOKEN)
 client.login(process.env.TOKEN);
