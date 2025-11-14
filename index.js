@@ -29,7 +29,7 @@ const ROLE_TRIGGER = "1423052122936573992"; // Império Oculto
 const ROLE_CHEFE = "1422984664812884168";  // Chefe
 const ROLE_SUBCHEFE = "1422986843074592928"; // Subchefe
 const CATEGORY_META = "1431402444956369037"; // Categoria: Meta individual
-const META_CHANNEL_ID = "1438929907215499488"; // Canal onde se enviam metas
+const META_CHANNEL_ID = "1438929907215499488"; // Canal META
 
 // Quando o bot inicia
 client.on("ready", () => {
@@ -100,9 +100,11 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
 
 client.on("messageCreate", async (message) => {
     if (message.author.bot) return;
+
+    // Apenas o canal de metas
     if (message.channel.id !== META_CHANNEL_ID) return;
 
-    // Apenas chefes podem enviar metas
+    // Apenas chefes
     if (
         !message.member.roles.cache.has(ROLE_CHEFE) &&
         !message.member.roles.cache.has(ROLE_SUBCHEFE)
@@ -123,11 +125,18 @@ client.on("messageCreate", async (message) => {
     const texto = message.content;
     const anexos = message.attachments.map(a => a.url);
 
-    categoria.children.cache.forEach(async (canal) => {
-        if (canal.type !== ChannelType.GuildText) return;
+    // Buscar canais que pertencem à categoria
+    const canais = guild.channels.cache.filter(
+        ch => ch.parentId === CATEGORY_META && ch.type === ChannelType.GuildText
+    );
 
+    console.log("Canais individuais encontrados:", canais.size);
+
+    for (const canal of canais.values()) {
+
+        // Identificar o dono do canal pelo nome
         const membro = guild.members.cache.find(
-            m => canal.name === m.user.username.toLowerCase()
+            m => m.user.username.toLowerCase() === canal.name.toLowerCase()
         );
 
         const mencao = membro ? `<@${membro.id}>` : "";
@@ -138,11 +147,14 @@ client.on("messageCreate", async (message) => {
                 files: anexos
             });
 
-            console.log(`Meta enviada para ${canal.name}`);
+            console.log(`Meta enviada para: ${canal.name}`);
+
         } catch (erro) {
-            console.log(`Erro ao enviar meta para ${canal.name}:`, erro);
+            console.log(`Erro ao enviar para ${canal.name}:`, erro);
         }
-    });
+    }
+
+    await message.channel.send("Meta enviada para todos os canais individuais.");
 });
 
 
@@ -182,7 +194,7 @@ schedule.scheduleJob("0 1 * * 0", async () => {
 
         if (!categoria) return;
 
-        categoria.children.cache.forEach(async (canal) => {
+        categoria.children?.cache?.forEach(async (canal) => {
             if (canal.type === ChannelType.GuildText) {
                 const mensagens = await canal.messages.fetch();
                 await canal.bulkDelete(mensagens, true);
