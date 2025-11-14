@@ -19,44 +19,38 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
     ]
 });
 
 // IDs necessárias
-const ROLE_TRIGGER = "1423052122936573992"; // Império Oculto 🕵
-const ROLE_CHEFE = "1422984664812884168";   // 👑 Chefe
-const ROLE_SUBCHEFE = "1422986843074592928"; // 🦍 Subchefe
-const CATEGORY_META = "1431402444956369037"; // 🎯 Meta individual
-
-// ID do canal onde o Chefe/Subchefe envia a meta
-const META_CHANNEL_ID = "1438929907215499488";
+const ROLE_TRIGGER = "1423052122936573992"; // Império Oculto
+const ROLE_CHEFE = "1422984664812884168";   // Chefe
+const ROLE_SUBCHEFE = "1422986843074592928"; // Subchefe
+const CATEGORY_META = "1431402444956369037"; // Categoria Meta Individual
+const META_CHANNEL_ID = "1438929907215499488"; // Canal de metas do chefe
 
 // Quando o bot liga
 client.on("ready", () => {
     console.log(`🟢 Bot online como ${client.user.tag}`);
 });
 
-// DEBUG — ver mudanças de cargo
+// Detectar mudança de cargos
 client.on("guildMemberUpdate", async (oldMember, newMember) => {
-    console.log("⚠️ EVENTO DISPARADO: guildMemberUpdate");
-    console.log("ANTES:", oldMember.roles.cache.map(r => r.id));
-    console.log("DEPOIS:", newMember.roles.cache.map(r => r.id));
+    try {
+        console.log("⚠️ EVENTO DISPARADO: guildMemberUpdate");
+        console.log("ANTES:", oldMember.roles.cache.map(r => r.id));
+        console.log("DEPOIS:", newMember.roles.cache.map(r => r.id));
 
-    // Se o user ganhou o cargo Império Oculto
-    if (
-        !oldMember.roles.cache.has(ROLE_TRIGGER) &&
-        newMember.roles.cache.has(ROLE_TRIGGER)
-    ) {
-        console.log("📌 Cargo Império Oculto DETETADO! Criando canal...");
+        // Se o user ganhou o cargo
+        if (
+            !oldMember.roles.cache.has(ROLE_TRIGGER) &&
+            newMember.roles.cache.has(ROLE_TRIGGER)
+        ) {
+            console.log("📌 Cargo Império Oculto DETETADO! Criando canal...");
 
-        const guild = newMember.guild;
-        const categoria = guild.channels.cache.get(CATEGORY_META);
+            const guild = newMember.guild;
+            const categoria = guild.channels.cache.get(CATEGORY_META);
 
-        if (!categoria) {
-            console.log("❌ Categoria não encontrada!");
-            return;
-        }
-
-        // Criar canal
-        const canal = await guild.channels.create({
+            if (!categoria) {
+                console.log("❌ Categoria não encon
