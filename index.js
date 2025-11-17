@@ -33,10 +33,10 @@ const client = new Client({
 // CONFIG DO SERVIDOR
 // ========================
 
-// Cargo que cria canal
+// Cargo que cria canal individual
 const ROLE_IMPERIO_ID = "1423052122936573992";
 
-// Cargos por NOME
+// Cargos por NOME (no servidor)
 const ROLE_CHEFE_NAME = "👑 Chefe — O Soberano Oculto";
 const ROLE_SUBCHEFE_NAME = "🦍 Subchefe — O Guardião da Coroa";
 const ROLE_BOT_NAME = "MetaBot";
@@ -47,7 +47,7 @@ const CATEGORY_ID = "1438935701973368884"; // 🎯 Meta Individual
 // Canal de metas
 const META_CHANNEL_ID = "1438936038050500772"; // meta
 
-// Nome do canal de registos
+// Canal de registos dentro da categoria
 const MEMBERS_LOG_CHANNEL_NAME = "membros";
 
 // ========================
@@ -64,6 +64,11 @@ function normalizarNome(nome) {
       .replace(/[^a-z0-9]+/g, "-") // tudo o que não for letra/número vira "-"
       .replace(/^-+|-+$/g, "") || "canal"
   );
+}
+
+// Data/hora formatada simples (hora de Portugal)
+function formatarData(d) {
+  return d.toLocaleString("pt-PT", { timeZone: "Europe/Lisbon" });
 }
 
 // Obter ou criar o canal "membros"
@@ -121,99 +126,115 @@ async function getOrCreateMembersLogChannel(guild) {
   return canal;
 }
 
-// Data/hora formatada simples
-function formatarData(d) {
-  return d.toLocaleString("pt-PT", { timeZone: "Europe/Lisbon" });
+// Procurar mensagem de registo de um membro no canal "membros"
+async function findMemberLogMessage(logChannel, memberId) {
+  const mensagens = await logChannel.messages.fetch({ limit: 100 });
+  return mensagens.find((m) => m.content.includes(`ID: ${memberId}`));
 }
 
 // ========================
 // LOGS NO CANAL "membros"
 // ========================
 
+// Criar ou atualizar registo base (quando recebe cargo)
 async function logRegistoInicial(member, canalNome) {
   const guild = member.guild;
   const logChannel = await getOrCreateMembersLogChannel(guild);
   if (!logChannel) return;
 
+  const existente = await findMemberLogMessage(logChannel, member.id);
   const agora = new Date();
-  await logChannel.send(
+
+  const conteudo =
     `🟢 Registo de ${member}\n` +
-      `• ID: \`${member.id}\`\n` +
-      `• Nome global: **${member.user.username}**\n` +
-      `• Nome no servidor: **${member.displayName}**\n` +
-      `• Canal: **${canalNome}**\n` +
-      `• Recebeu cargo: ${formatarData(agora)}\n` +
-      `• Última meta: Nenhuma ainda`
-  );
+    `• ID: ${member.id}\n` +
+    `• Nome global: ${member.user.username}\n` +
+    `• Nome no servidor: ${member.displayName}\n` +
+    `• Canal: ${canalNome}\n` +
+    `• Recebeu cargo: ${formatarData(agora)}\n` +
+    `• Última meta: Nenhuma ainda`;
+
+  if (existente) {
+    await existente.edit(conteudo);
+  } else {
+    await logChannel.send(conteudo);
+  }
 }
 
-async function logNomeAtualizado(oldMember, newMember, canalNome) {
+// Atualizar registo quando meta é enviada
+async function logAtualizarMeta(member, tipo) {
+  const guild = member.guild;
+  const logChannel = await getOrCreateMembersLogChannel(guild);
+  if (!logChannel) return;
+
+  const msg = await findMemberLogMessage(logChannel, member.id);
+  if (!msg) return;
+
+  const linhas = msg.content.split("\n");
+  const agora = formatarData(new Date());
+
+  // Atualiza apenas a linha da "Última meta"
+  const novaLinhas = linhas.map((linha) => {
+    if (linha.startsWith("• Última meta:")) {
+      return `• Última meta: ${agora} (${tipo})`;
+    }
+    return linha;
+  });
+
+  await msg.edit(novaLinhas.join("\n"));
+}
+
+// Atualizar registo quando nome é alterado (mantendo tudo o resto)
+async function logAtualizarNome(oldMember, newMember, canalNome) {
   const guild = newMember.guild;
   const logChannel = await getOrCreateMembersLogChannel(guild);
   if (!logChannel) return;
 
-  const agora = new Date();
-  await logChannel.send(
-    `🔄 Nome atualizado para ${newMember}\n` +
-      `• ID: \`${newMember.id}\`\n` +
-      `• Nome global: **${newMember.user.username}**\n` +
-      `• Nome anterior no servidor: **${oldMember.displayName}**\n` +
-      `• Nome atual no servidor: **${newMember.displayName}**\n` +
-      `• Canal atual: **${canalNome}**\n` +
-      `• Atualizado em: ${formatarData(agora)}`
-  );
+  const msg = await findMemberLogMessage(logChannel, newMember.id);
+  if (!msg) return;
+
+  const linhas = msg.content.split("\n");
+  const novas = linhas.map((linha) => {
+    if (linha.startsWith("🟢 Registo de")) {
+      return `🟢 Registo de ${newMember}`;
+    }
+    if (linha.startsWith("• Nome global:")) {
+      return `• Nome global: ${newMember.user.username}`;
+    }
+    if (linha.startsWith("• Nome no servidor:")) {
+      return `• Nome no servidor: ${newMember.displayName}`;
+    }
+    if (linha.startsWith("• Canal:")) {
+      return `• Canal: ${canalNome}`;
+    }
+    return linha;
+  });
+
+  await msg.edit(novas.join("\n"));
 }
 
-async function logPerdeuCargo(member) {
+// Atualizar registo quando perde cargo ou sai do servidor
+async function logRemocao(member, canalNome) {
   const guild = member.guild;
   const logChannel = await getOrCreateMembersLogChannel(guild);
   if (!logChannel) return;
 
-  const agora = new Date();
-  await logChannel.send(
-    `🚫 ${member} perdeu o cargo Império.\n` +
-      `• ID: \`${member.id}\`\n` +
-      `• Nome no servidor: **${member.displayName}**\n` +
-      `• Data: ${formatarData(agora)}`
-  );
-}
+  const msg = await findMemberLogMessage(logChannel, member.id);
+  const agora = formatarData(new Date());
 
-async function logSaiu(member) {
-  const guild = member.guild;
-  const logChannel = await getOrCreateMembersLogChannel(guild);
-  if (!logChannel) return;
+  const conteudo =
+    `🚫 Saída de ${member}\n` +
+    `• ID: ${member.id}\n` +
+    `• Nome global: ${member.user.username}\n` +
+    `• Nome no servidor: ${member.displayName}\n` +
+    `• Canal: ${canalNome}\n` +
+    `• Removido a: ${agora}`;
 
-  const agora = new Date();
-  await logChannel.send(
-    `🚪 ${member.user.tag} saiu do servidor.\n` +
-      `• ID: \`${member.id}\`\n` +
-      `• Último nome no servidor: **${member.displayName}**\n` +
-      `• Data: ${formatarData(agora)}`
-  );
-}
-
-async function logMetaGlobal(author) {
-  const guild = author.guild;
-  const logChannel = await getOrCreateMembersLogChannel(guild);
-  if (!logChannel) return;
-
-  const agora = new Date();
-  await logChannel.send(
-    `📌 Meta global enviada por ${author}\n` +
-      `• Data: ${formatarData(agora)}`
-  );
-}
-
-async function logMetaIndividual(member, autor) {
-  const guild = member.guild;
-  const logChannel = await getOrCreateMembersLogChannel(guild);
-  if (!logChannel) return;
-
-  const agora = new Date();
-  await logChannel.send(
-    `🎯 Meta individual enviada para ${member} por ${autor}\n` +
-      `• Data: ${formatarData(agora)}`
-  );
+  if (msg) {
+    await msg.edit(conteudo);
+  } else {
+    await logChannel.send(conteudo);
+  }
 }
 
 // ========================
@@ -247,6 +268,7 @@ async function criarCanal(member) {
   );
   if (existente) {
     console.log(`ℹ️ Canal já existia: ${canalName}`);
+    await logRegistoInicial(member, existente.name);
     return existente;
   }
 
@@ -309,6 +331,8 @@ async function apagarCanal(member) {
   } catch (err) {
     console.log("❌ Erro ao remover canal:", err);
   }
+
+  await logRemocao(member, canalName);
 }
 
 async function renomearCanalPorNome(oldMember, newMember) {
@@ -330,7 +354,7 @@ async function renomearCanalPorNome(oldMember, newMember) {
   try {
     await canal.setName(newName);
     console.log(`🔄 Canal renomeado: ${oldName} → ${newName}`);
-    await logNomeAtualizado(oldMember, newMember, newName);
+    await logAtualizarNome(oldMember, newMember, newName);
   } catch (err) {
     console.log("❌ Erro ao renomear canal:", err);
   }
@@ -354,17 +378,15 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
   if (oldHas && !newHas) {
     console.log(`📌 ${newMember.user.username} perdeu cargo Império.`);
     await apagarCanal(newMember);
-    await logPerdeuCargo(newMember);
   }
 
-  // Mudança de nome → renomear canal
+  // Mudança de nome → renomear canal + atualizar log
   await renomearCanalPorNome(oldMember, newMember);
 });
 
 client.on("guildMemberRemove", async (member) => {
   console.log(`🚪 ${member.user.username} saiu do servidor.`);
   await apagarCanal(member);
-  await logSaiu(member);
 });
 
 // ========================
@@ -424,26 +446,22 @@ function iniciarLimpezaSemanal() {
 }
 
 // ========================
-// EVENTO PRINCIPAL DE MENSAGENS
+// EVENTO PRINCIPAL DE MENSAGENS (META, !limpar, !meta @user)
 // ========================
 client.on("messageCreate", async (msg) => {
   if (msg.author.bot) return;
 
-  // Só lidamos com coisas do canal META
+  // Só lidamos com mensagens no canal META
   if (msg.channel.id !== META_CHANNEL_ID) return;
 
   const guild = msg.guild;
   const member = msg.member;
-
   if (!guild || !member) return;
 
-  // Checar cargos do autor
   const temChefe = member.roles.cache.some((r) => r.name === ROLE_CHEFE_NAME);
   const temSub = member.roles.cache.some((r) => r.name === ROLE_SUBCHEFE_NAME);
 
-  // ========================
-  // COMANDO !limpar
-  // ========================
+  // ---------- COMANDO !limpar ----------
   if (msg.content.toLowerCase() === "!limpar") {
     if (!temChefe && !temSub) {
       msg.reply("❌ Não tens permissão para usar este comando.");
@@ -455,9 +473,7 @@ client.on("messageCreate", async (msg) => {
     return;
   }
 
-  // ========================
-  // COMANDO !meta @user texto...
-  // ========================
+  // ---------- COMANDO !meta @user texto ----------
   if (msg.content.toLowerCase().startsWith("!meta")) {
     if (!temChefe && !temSub) {
       msg.reply("❌ Não tens permissão para usar este comando.");
@@ -481,18 +497,17 @@ client.on("messageCreate", async (msg) => {
     );
 
     if (!canal) {
-      // Se por acaso não existir, cria
       canal = await criarCanal(target);
     }
 
     try {
       await canal.send({
-        content: "📌 **Nova meta adicionada! (Individual)**\n\n" + textoMeta,
+        content: "📌 **Nova meta adicionada!**\n\n" + textoMeta,
         files: msg.attachments.map((a) => a.url),
       });
 
       console.log(`🎯 Meta individual enviada para ${canal.name}`);
-      await logMetaIndividual(target, member);
+      await logAtualizarMeta(target, "individual");
       msg.channel.send(`✔️ Meta individual enviada para ${target}.`);
     } catch (err) {
       console.log("❌ Erro ao enviar meta individual:", err);
@@ -502,9 +517,7 @@ client.on("messageCreate", async (msg) => {
     return;
   }
 
-  // ========================
-  // META GLOBAL (qualquer outra mensagem no canal META)
-  // ========================
+  // ---------- META GLOBAL (qualquer outra mensagem no canal META) ----------
   if (!temChefe && !temSub) {
     msg.reply("❌ Apenas o Chefe ou Subchefe podem enviar metas.");
     return;
@@ -527,12 +540,21 @@ client.on("messageCreate", async (msg) => {
       });
 
       console.log(`➡️ Meta enviada para ${canal.name}`);
+
+      // Encontrar o membro dono (por displayName normalizado)
+      const membro = guild.members.cache.find((m) => {
+        const nomeNorm = normalizarNome(m.displayName || m.user.username);
+        return nomeNorm === canal.name;
+      });
+
+      if (membro) {
+        await logAtualizarMeta(membro, "grupo");
+      }
     } catch (err) {
       console.log(`❌ Erro no canal ${canal.name}:`, err);
     }
   }
 
-  await logMetaGlobal(member);
   await msg.channel.send("✔️ Meta enviada para todos os canais individuais!");
 });
 
