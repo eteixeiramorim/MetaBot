@@ -357,7 +357,7 @@ async function adicionarResultadoSemana(guild, member, evaluatorDisplayName, cum
   );
 
   const novaLinha = `${nomeCanal.padEnd(14, " ")} ${
-    (cumpriu ? "🟢 Cumpriu".padEnd(19, " ") : "🔴 Não cumpriu".padEnd(19, " "))
+    (cumpriu ? "🟢 Entregou".padEnd(19, " ") : "🔴 Não entregou".padEnd(19, " "))
   } ${evaluatorDisplayName}`;
 
   let idxUser = -1;
@@ -502,6 +502,7 @@ async function apagarCanal(member) {
   }
 
   await logRemocao(member, canalName);
+  await removerResultadoSemana(member.guild, member);
 }
 
 async function renomearCanalPorNome(oldMember, newMember) {
