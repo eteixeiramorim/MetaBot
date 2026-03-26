@@ -58,7 +58,8 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMessageReactions
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.MessageContent
   ],
   partials: [Partials.Channel, Partials.Message, Partials.Reaction]
 });
@@ -110,15 +111,17 @@ function formatDate(iso) {
 }
 
 function normalizeChannelName(name) {
-  return name
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .slice(0, 90) || "membro";
+  return (
+    name
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .slice(0, 90) || "membro"
+  );
 }
 
 function isChefe(member) {
@@ -126,7 +129,10 @@ function isChefe(member) {
 }
 
 function canReact(member) {
-  return member.roles.cache.has(ROLE_CHEFE) || member.roles.cache.has(ROLE_SUBCHEFE);
+  return (
+    member.roles.cache.has(ROLE_CHEFE) ||
+    member.roles.cache.has(ROLE_SUBCHEFE)
+  );
 }
 
 function isMetaChannel(interaction) {
@@ -321,6 +327,7 @@ async function createOrUpdateMemberChannel(member) {
   ];
 
   if (!channel) {
+    console.log(`➡️ A criar canal individual para ${member.user.tag}`);
     channel = await guild.channels.create({
       name: desiredName,
       type: ChannelType.GuildText,
@@ -330,6 +337,7 @@ async function createOrUpdateMemberChannel(member) {
     });
     entry.channelId = channel.id;
   } else {
+    console.log(`➡️ A atualizar canal individual para ${member.user.tag}`);
     if (channel.name !== desiredName) {
       await channel.setName(desiredName).catch(console.error);
     }
@@ -349,13 +357,32 @@ async function createOrUpdateMemberChannel(member) {
 async function deleteMemberChannel(guild, userId) {
   const data = loadData();
   const entry = data.members[userId];
-  if (!entry) return;
+
+  console.log(`🗑️ A tentar apagar canal do utilizador ${userId}`);
+
+  if (!entry) {
+    console.log("❌ Não existe registo desse utilizador em data.members");
+    return;
+  }
+
+  console.log("📌 entry.channelId:", entry.channelId);
 
   if (entry.channelId) {
-    const channel = await guild.channels.fetch(entry.channelId).catch(() => null);
+    const channel = await guild.channels.fetch(entry.channelId).catch(err => {
+      console.error("❌ Erro a procurar canal:", err);
+      return null;
+    });
+
     if (channel) {
-      await channel.delete("Perdeu cargo Imperio ou saiu do servidor").catch(console.error);
+      await channel.delete("Perdeu cargo Imperio ou saiu do servidor").catch(err => {
+        console.error("❌ Erro ao apagar canal:", err);
+      });
+      console.log("✅ Canal apagado");
+    } else {
+      console.log("❌ Canal não encontrado");
     }
+  } else {
+    console.log("❌ O utilizador não tem channelId guardado");
   }
 
   entry.channelId = null;
@@ -507,7 +534,9 @@ async function handleMetaGlobal(interaction) {
 
   activeMeta.mainMessageIds.push(mainMsg.id);
 
-  const imperioMembers = guild.members.cache.filter(m => !m.user.bot && m.roles.cache.has(ROLE_IMPERIO));
+  const imperioMembers = guild.members.cache.filter(
+    m => !m.user.bot && m.roles.cache.has(ROLE_IMPERIO)
+  );
 
   for (const [, member] of imperioMembers) {
     const entry = ensureMemberEntry(data, member);
@@ -746,7 +775,10 @@ async function handleLimparMetaIndividual(interaction) {
     });
   }
 
-  const item = [...meta.items].reverse().find(i => i.type === "individual" && i.targetUserId === user.id);
+  const item = [...meta.items].reverse().find(
+    i => i.type === "individual" && i.targetUserId === user.id
+  );
+
   if (!item) {
     return interaction.reply({
       content: "❌ Não encontrei meta individual dessa pessoa.",
@@ -847,7 +879,9 @@ async function updateReactionVote(reaction, userId, action) {
   if (!member || !canReact(member)) return;
   if (reaction.message.author?.id !== client.user.id) return;
 
-  const ownerEntry = Object.values(data.members).find(entry => entry.channelId === reaction.message.channelId);
+  const ownerEntry = Object.values(data.members).find(
+    entry => entry.channelId === reaction.message.channelId
+  );
   if (!ownerEntry) return;
 
   const participant = meta.participants[ownerEntry.userId];
@@ -895,7 +929,12 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
     const hadImperio = oldMember.roles.cache.has(ROLE_IMPERIO);
     const hasImperio = newMember.roles.cache.has(ROLE_IMPERIO);
 
+    console.log(`🔄 GuildMemberUpdate: ${newMember.user.tag}`);
+    console.log(`Antes tinha Império? ${hadImperio}`);
+    console.log(`Agora tem Império? ${hasImperio}`);
+
     if (!hadImperio && hasImperio) {
+      console.log("➡️ Recebeu cargo Império, a criar/atualizar canal...");
       const data = loadData();
       const entry = ensureMemberEntry(data, newMember);
       entry.receivedImperioAt = nowISO();
@@ -904,14 +943,19 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
       saveData(data);
 
       await createOrUpdateMemberChannel(newMember);
+      console.log("✅ Canal individual criado/atualizado");
     }
 
     if (hadImperio && !hasImperio) {
+      console.log("➡️ Perdeu cargo Império, a apagar canal...");
       await deleteMemberChannel(newMember.guild, newMember.id);
+      console.log("✅ Processo de apagar canal terminado");
     }
 
     if (hasImperio && oldMember.displayName !== newMember.displayName) {
+      console.log("➡️ Nome alterado, a atualizar canal...");
       await createOrUpdateMemberChannel(newMember);
+      console.log("✅ Nome do canal atualizado");
     }
   } catch (err) {
     console.error("❌ Erro em GuildMemberUpdate:", err);
@@ -920,6 +964,7 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
 
 client.on(Events.GuildMemberRemove, async member => {
   try {
+    console.log(`👋 GuildMemberRemove: ${member.user.tag}`);
     await deleteMemberChannel(member.guild, member.id);
   } catch (err) {
     console.error("❌ Erro em GuildMemberRemove:", err);
@@ -980,15 +1025,19 @@ client.on(Events.InteractionCreate, async interaction => {
     console.error("❌ Erro em InteractionCreate:", err);
 
     if (interaction.deferred || interaction.replied) {
-      return interaction.editReply({
-        content: "❌ Ocorreu um erro ao executar o comando."
-      }).catch(() => {});
+      return interaction
+        .editReply({
+          content: "❌ Ocorreu um erro ao executar o comando."
+        })
+        .catch(() => {});
     }
 
-    return interaction.reply({
-      content: "❌ Ocorreu um erro ao executar o comando.",
-      ephemeral: true
-    }).catch(() => {});
+    return interaction
+      .reply({
+        content: "❌ Ocorreu um erro ao executar o comando.",
+        ephemeral: true
+      })
+      .catch(() => {});
   }
 });
 
