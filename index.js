@@ -51,6 +51,37 @@ const CATEGORIA_META_INDIVIDUAL = "1438935701973368884";
 const DATA_FILE = path.join(process.cwd(), "metabot-data.json");
 
 // ==============================
+// DATA
+// ==============================
+function defaultData() {
+  return {
+    members: {},
+    activeMeta: null,
+    lastWorkerDispatch: null
+  };
+}
+
+function readDataFile() {
+  try {
+    if (!fs.existsSync(DATA_FILE)) return defaultData();
+    return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  } catch (err) {
+    console.error("❌ Erro a ler metabot-data.json:", err);
+    return defaultData();
+  }
+}
+
+const DB = readDataFile();
+
+function saveData() {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(DB, null, 2), "utf8");
+  } catch (err) {
+    console.error("❌ Erro a gravar metabot-data.json:", err);
+  }
+}
+
+// ==============================
 // CLIENT
 // ==============================
 const client = new Client({
@@ -63,37 +94,6 @@ const client = new Client({
   ],
   partials: [Partials.Channel, Partials.Message, Partials.Reaction]
 });
-
-// ==============================
-// DATA
-// ==============================
-function loadData() {
-  try {
-    if (!fs.existsSync(DATA_FILE)) {
-      return {
-        members: {},
-        activeMeta: null,
-        lastWorkerDispatch: null
-      };
-    }
-    return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-  } catch (err) {
-    console.error("❌ Erro a ler metabot-data.json:", err);
-    return {
-      members: {},
-      activeMeta: null,
-      lastWorkerDispatch: null
-    };
-  }
-}
-
-function saveData(data) {
-  try {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf8");
-  } catch (err) {
-    console.error("❌ Erro a gravar metabot-data.json:", err);
-  }
-}
 
 // ==============================
 // UTIL
@@ -142,9 +142,9 @@ function isMetaChannel(interaction) {
   return interaction.channelId === CANAL_META;
 }
 
-function ensureMemberEntry(data, member) {
-  if (!data.members[member.id]) {
-    data.members[member.id] = {
+function ensureMemberEntry(member) {
+  if (!DB.members[member.id]) {
+    DB.members[member.id] = {
       userId: member.id,
       serverName: member.displayName,
       username: member.user.username,
@@ -154,7 +154,7 @@ function ensureMemberEntry(data, member) {
       lastMetaAt: null
     };
   }
-  return data.members[member.id];
+  return DB.members[member.id];
 }
 
 // ==============================
@@ -172,8 +172,7 @@ function buildRegistryMessage(entry) {
 }
 
 async function updateRegistryMessage(guild, userId) {
-  const data = loadData();
-  const entry = data.members[userId];
+  const entry = DB.members[userId];
   if (!entry) return;
 
   const canal = await guild.channels.fetch(CANAL_REGISTO_MEMBROS).catch(() => null);
@@ -192,16 +191,15 @@ async function updateRegistryMessage(guild, userId) {
   const nova = await canal.send(content).catch(console.error);
   if (nova) {
     entry.registryMessageId = nova.id;
-    saveData(data);
+    saveData();
   }
 }
 
 // ==============================
-// ENCONTRAR CANAL DO MEMBRO
+// CANAIS INDIVIDUAIS
 // ==============================
 async function findMemberChannel(guild, member) {
-  const data = loadData();
-  const entry = data.members[member.id];
+  const entry = DB.members[member.id];
 
   if (entry?.channelId) {
     const byId = await guild.channels.fetch(entry.channelId).catch(() => null);
@@ -235,12 +233,8 @@ async function findMemberChannel(guild, member) {
   return byTopic || null;
 }
 
-// ==============================
-// CRIAR / ATUALIZAR CANAL
-// ==============================
 async function createOrUpdateMemberChannel(member) {
-  const data = loadData();
-  const entry = ensureMemberEntry(data, member);
+  const entry = ensureMemberEntry(member);
 
   const guild = member.guild;
   const name = normalizeChannelName(member.displayName);
@@ -296,13 +290,10 @@ async function createOrUpdateMemberChannel(member) {
   entry.serverName = member.displayName;
   entry.username = member.user.username;
 
-  saveData(data);
+  saveData();
   await updateRegistryMessage(guild, member.id);
 }
 
-// ==============================
-// APAGAR CANAL
-// ==============================
 async function deleteMemberChannel(guild, userId) {
   console.log(`🗑️ Apagar canal do ${userId}`);
 
@@ -325,10 +316,9 @@ async function deleteMemberChannel(guild, userId) {
     console.log("✅ Canal apagado");
   }
 
-  const data = loadData();
-  if (data.members[userId]) {
-    data.members[userId].channelId = null;
-    saveData(data);
+  if (DB.members[userId]) {
+    DB.members[userId].channelId = null;
+    saveData();
     await updateRegistryMessage(guild, userId);
   }
 }
@@ -463,6 +453,7 @@ function buildMetaLog(meta) {
   const lines = [];
   lines.push(`📅 Meta — ${formatDate(meta.startedAt)} → ${meta.endedAt ? formatDate(meta.endedAt) : "-"}`);
   lines.push("");
+
   lines.push("✅ Entregou");
   if (entregou.length === 0) {
     lines.push("- Nenhum");
@@ -490,8 +481,7 @@ function buildMetaLog(meta) {
 }
 
 async function createOrUpdateMetaLogMessage(guild) {
-  const data = loadData();
-  const meta = data.activeMeta;
+  const meta = DB.activeMeta;
   if (!meta) return;
 
   const canal = await guild.channels.fetch(CANAL_LOGS_META).catch(() => null);
@@ -510,7 +500,7 @@ async function createOrUpdateMetaLogMessage(guild) {
   const nova = await canal.send(content).catch(console.error);
   if (nova) {
     meta.logMessageId = nova.id;
-    saveData(data);
+    saveData();
   }
 }
 
@@ -530,15 +520,14 @@ async function handleMetaGlobal(interaction) {
   const imagem = interaction.options.getAttachment("imagem");
   const guild = interaction.guild;
 
-  const data = loadData();
-  if (data.activeMeta && !data.activeMeta.endedAt) {
+  if (DB.activeMeta && !DB.activeMeta.endedAt) {
     return interaction.reply({
       content: "❌ Já existe uma meta ativa. Usa /fim meta antes de abrir outra.",
       ephemeral: true
     });
   }
 
-  const activeMeta = {
+  DB.activeMeta = {
     id: `meta_${Date.now()}`,
     startedAt: nowISO(),
     endedAt: null,
@@ -547,6 +536,7 @@ async function handleMetaGlobal(interaction) {
     items: [],
     participants: {}
   };
+  saveData();
 
   const canalMeta = await guild.channels.fetch(CANAL_META).catch(() => null);
   if (!canalMeta || !canalMeta.isTextBased()) {
@@ -558,20 +548,22 @@ async function handleMetaGlobal(interaction) {
 
   const mainMsg = await sendMetaMessage(canalMeta, texto, imagem).catch(() => null);
   if (!mainMsg) {
+    DB.activeMeta = null;
+    saveData();
     return interaction.reply({
       content: "❌ Não consegui enviar a meta no canal principal.",
       ephemeral: true
     });
   }
 
-  activeMeta.mainMessageIds.push(mainMsg.id);
+  DB.activeMeta.mainMessageIds.push(mainMsg.id);
 
   const imperioMembers = guild.members.cache.filter(
     m => !m.user.bot && m.roles.cache.has(ROLE_IMPERIO)
   );
 
   for (const [, member] of imperioMembers) {
-    const entry = ensureMemberEntry(data, member);
+    const entry = ensureMemberEntry(member);
     entry.serverName = member.displayName;
     entry.username = member.user.username;
 
@@ -579,10 +571,8 @@ async function handleMetaGlobal(interaction) {
       await createOrUpdateMemberChannel(member);
     }
 
-    const refreshedData = loadData();
-    const refreshedEntry = refreshedData.members[member.id];
-    const channel = refreshedEntry?.channelId
-      ? await guild.channels.fetch(refreshedEntry.channelId).catch(() => null)
+    const channel = entry.channelId
+      ? await guild.channels.fetch(entry.channelId).catch(() => null)
       : null;
 
     if (!channel || !channel.isTextBased()) continue;
@@ -590,21 +580,20 @@ async function handleMetaGlobal(interaction) {
     const msg = await sendMetaMessage(channel, texto, imagem).catch(() => null);
     if (!msg) continue;
 
-    const participant = ensureActiveMetaParticipant(activeMeta, refreshedEntry);
+    const participant = ensureActiveMetaParticipant(DB.activeMeta, entry);
     participant.messageIds.push(msg.id);
-    refreshedEntry.lastMetaAt = nowISO();
-    saveData(refreshedData);
+    entry.lastMetaAt = nowISO();
+    saveData();
     await updateRegistryMessage(guild, member.id);
   }
 
-  activeMeta.items.push({
+  DB.activeMeta.items.push({
     type: "global",
     targetUserId: null,
     mainMessageId: mainMsg.id
   });
 
-  data.activeMeta = activeMeta;
-  saveData(data);
+  saveData();
   await createOrUpdateMetaLogMessage(guild);
 
   return interaction.reply({
@@ -619,8 +608,7 @@ async function handleMetaIndividual(interaction) {
   const imagem = interaction.options.getAttachment("imagem");
   const guild = interaction.guild;
 
-  const data = loadData();
-  if (!data.activeMeta || data.activeMeta.endedAt) {
+  if (!DB.activeMeta || DB.activeMeta.endedAt) {
     return interaction.reply({
       content: "❌ Não existe meta ativa. Usa /meta global primeiro.",
       ephemeral: true
@@ -652,14 +640,15 @@ async function handleMetaIndividual(interaction) {
     });
   }
 
-  let entry = ensureMemberEntry(data, member);
+  const entry = ensureMemberEntry(member);
   if (!entry.channelId) {
     await createOrUpdateMemberChannel(member);
-    const refreshed = loadData();
-    entry = refreshed.members[member.id];
   }
 
-  const channel = await guild.channels.fetch(entry.channelId).catch(() => null);
+  const channel = entry.channelId
+    ? await guild.channels.fetch(entry.channelId).catch(() => null)
+    : null;
+
   if (!channel || !channel.isTextBased()) {
     return interaction.reply({
       content: "❌ Não consegui aceder ao canal individual dessa pessoa.",
@@ -675,22 +664,18 @@ async function handleMetaIndividual(interaction) {
     });
   }
 
-  const updatedData = loadData();
-  const meta = updatedData.activeMeta;
-  const updatedEntry = updatedData.members[member.id];
-
-  const participant = ensureActiveMetaParticipant(meta, updatedEntry);
+  const participant = ensureActiveMetaParticipant(DB.activeMeta, entry);
   participant.messageIds.push(msg.id);
 
-  meta.items.push({
+  DB.activeMeta.items.push({
     type: "individual",
     targetUserId: member.id,
     mainMessageId: mainMsg.id,
     childMessageId: msg.id
   });
 
-  updatedEntry.lastMetaAt = nowISO();
-  saveData(updatedData);
+  entry.lastMetaAt = nowISO();
+  saveData();
 
   await updateRegistryMessage(guild, member.id);
   await createOrUpdateMetaLogMessage(guild);
@@ -728,12 +713,11 @@ async function handleMetaTrabalhador(interaction) {
     });
   }
 
-  const data = loadData();
-  data.lastWorkerDispatch = {
+  DB.lastWorkerDispatch = {
     mainMessageId: mainMsg.id,
     workerMessageId: workerMsg.id
   };
-  saveData(data);
+  saveData();
 
   return interaction.reply({
     content: "✅ Meta trabalhador enviada.",
@@ -751,8 +735,7 @@ async function deleteMessageSafe(channel, messageId) {
 }
 
 async function handleLimparMetaGlobal(interaction) {
-  const data = loadData();
-  const meta = data.activeMeta;
+  const meta = DB.activeMeta;
 
   if (!meta) {
     return interaction.reply({
@@ -776,7 +759,7 @@ async function handleLimparMetaGlobal(interaction) {
 
   for (const participant of Object.values(meta.participants)) {
     for (const messageId of participant.messageIds) {
-      const memberEntry = data.members[participant.userId];
+      const memberEntry = DB.members[participant.userId];
       if (!memberEntry?.channelId) continue;
       const ch = await guild.channels.fetch(memberEntry.channelId).catch(() => null);
       await deleteMessageSafe(ch, messageId);
@@ -786,7 +769,7 @@ async function handleLimparMetaGlobal(interaction) {
   }
 
   meta.items = meta.items.filter(i => i !== globalItem);
-  saveData(data);
+  saveData();
   await createOrUpdateMetaLogMessage(guild);
 
   return interaction.reply({
@@ -797,8 +780,7 @@ async function handleLimparMetaGlobal(interaction) {
 
 async function handleLimparMetaIndividual(interaction) {
   const user = interaction.options.getUser("pessoa", true);
-  const data = loadData();
-  const meta = data.activeMeta;
+  const meta = DB.activeMeta;
 
   if (!meta) {
     return interaction.reply({
@@ -822,7 +804,7 @@ async function handleLimparMetaIndividual(interaction) {
   const canalMeta = await guild.channels.fetch(CANAL_META).catch(() => null);
   await deleteMessageSafe(canalMeta, item.mainMessageId);
 
-  const memberEntry = data.members[user.id];
+  const memberEntry = DB.members[user.id];
   if (memberEntry?.channelId) {
     const ch = await guild.channels.fetch(memberEntry.channelId).catch(() => null);
     await deleteMessageSafe(ch, item.childMessageId);
@@ -834,7 +816,7 @@ async function handleLimparMetaIndividual(interaction) {
   }
 
   meta.items = meta.items.filter(i => i !== item);
-  saveData(data);
+  saveData();
   await createOrUpdateMetaLogMessage(guild);
 
   return interaction.reply({
@@ -844,8 +826,7 @@ async function handleLimparMetaIndividual(interaction) {
 }
 
 async function handleLimparMetaTrabalhador(interaction) {
-  const data = loadData();
-  if (!data.lastWorkerDispatch) {
+  if (!DB.lastWorkerDispatch) {
     return interaction.reply({
       content: "❌ Não existe meta trabalhador para limpar.",
       ephemeral: true
@@ -856,11 +837,11 @@ async function handleLimparMetaTrabalhador(interaction) {
   const canalMeta = await guild.channels.fetch(CANAL_META).catch(() => null);
   const canalTrab = await guild.channels.fetch(CANAL_META_TRABALHADOR).catch(() => null);
 
-  await deleteMessageSafe(canalMeta, data.lastWorkerDispatch.mainMessageId);
-  await deleteMessageSafe(canalTrab, data.lastWorkerDispatch.workerMessageId);
+  await deleteMessageSafe(canalMeta, DB.lastWorkerDispatch.mainMessageId);
+  await deleteMessageSafe(canalTrab, DB.lastWorkerDispatch.workerMessageId);
 
-  data.lastWorkerDispatch = null;
-  saveData(data);
+  DB.lastWorkerDispatch = null;
+  saveData();
 
   return interaction.reply({
     content: "✅ Meta trabalhador limpa.",
@@ -872,16 +853,15 @@ async function handleLimparMetaTrabalhador(interaction) {
 // FECHAR META
 // ==============================
 async function handleFimMeta(interaction) {
-  const data = loadData();
-  if (!data.activeMeta || data.activeMeta.endedAt) {
+  if (!DB.activeMeta || DB.activeMeta.endedAt) {
     return interaction.reply({
       content: "❌ Não existe meta ativa para fechar.",
       ephemeral: true
     });
   }
 
-  data.activeMeta.endedAt = nowISO();
-  saveData(data);
+  DB.activeMeta.endedAt = nowISO();
+  saveData();
   await createOrUpdateMetaLogMessage(interaction.guild);
 
   return interaction.reply({
@@ -894,8 +874,7 @@ async function handleFimMeta(interaction) {
 // REAÇÕES
 // ==============================
 async function updateReactionVote(reaction, userId, action) {
-  const data = loadData();
-  const meta = data.activeMeta;
+  const meta = DB.activeMeta;
   if (!meta || meta.endedAt) return;
 
   const emoji = reaction.emoji.name;
@@ -911,7 +890,7 @@ async function updateReactionVote(reaction, userId, action) {
   if (!member || !canReact(member)) return;
   if (reaction.message.author?.id !== client.user.id) return;
 
-  const ownerEntry = Object.values(data.members).find(
+  const ownerEntry = Object.values(DB.members).find(
     entry => entry.channelId === reaction.message.channelId
   );
   if (!ownerEntry) return;
@@ -929,7 +908,7 @@ async function updateReactionVote(reaction, userId, action) {
     participant.votes[voterKey] = null;
   }
 
-  saveData(data);
+  saveData();
   await createOrUpdateMetaLogMessage(reaction.message.guild);
 }
 
@@ -964,12 +943,11 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
     console.log(`🔄 ${newMember.user.tag}: ${had} -> ${has}`);
 
     if (!had && has) {
-      const data = loadData();
-      const entry = ensureMemberEntry(data, newMember);
+      const entry = ensureMemberEntry(newMember);
       entry.receivedImperioAt = nowISO();
       entry.serverName = newMember.displayName;
       entry.username = newMember.user.username;
-      saveData(data);
+      saveData();
 
       await createOrUpdateMemberChannel(newMember);
       return;
