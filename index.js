@@ -14,7 +14,7 @@ import path from "path";
 import http from "http";
 
 // ==============================
-// WEB SERVER PARA RENDER
+// WEB SERVER (RENDER)
 // ==============================
 const PORT = process.env.PORT || 10000;
 
@@ -24,11 +24,11 @@ http
     res.end("MetaBot online");
   })
   .listen(PORT, "0.0.0.0", () => {
-    console.log(`🌐 Web service ativo na porta ${PORT}`);
+    console.log(`🌐 Web ativo na porta ${PORT}`);
   });
 
 // ==============================
-// VARIAVEIS DE AMBIENTE
+// ENV
 // ==============================
 const TOKEN = process.env.BOT_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -65,7 +65,7 @@ const client = new Client({
 });
 
 // ==============================
-// PERSISTENCIA
+// DATA
 // ==============================
 function loadData() {
   try {
@@ -95,6 +95,9 @@ function saveData(data) {
   }
 }
 
+// ==============================
+// UTIL
+// ==============================
 function nowISO() {
   return new Date().toISOString();
 }
@@ -154,6 +157,9 @@ function ensureMemberEntry(data, member) {
   return data.members[member.id];
 }
 
+// ==============================
+// REGISTO DE MEMBROS
+// ==============================
 function buildRegistryMessage(entry) {
   return [
     `Nome servidor: ${entry.serverName}`,
@@ -187,6 +193,143 @@ async function updateRegistryMessage(guild, userId) {
   if (nova) {
     entry.registryMessageId = nova.id;
     saveData(data);
+  }
+}
+
+// ==============================
+// ENCONTRAR CANAL DO MEMBRO
+// ==============================
+async function findMemberChannel(guild, member) {
+  const data = loadData();
+  const entry = data.members[member.id];
+
+  if (entry?.channelId) {
+    const byId = await guild.channels.fetch(entry.channelId).catch(() => null);
+    if (byId) return byId;
+  }
+
+  const desiredName = normalizeChannelName(member.displayName);
+
+  const byName = guild.channels.cache.find(
+    ch =>
+      ch.parentId === CATEGORIA_META_INDIVIDUAL &&
+      ch.type === ChannelType.GuildText &&
+      ch.name === desiredName
+  );
+  if (byName) return byName;
+
+  const byPerm = guild.channels.cache.find(
+    ch =>
+      ch.parentId === CATEGORIA_META_INDIVIDUAL &&
+      ch.type === ChannelType.GuildText &&
+      ch.permissionOverwrites.cache.has(member.id)
+  );
+  if (byPerm) return byPerm;
+
+  const byTopic = guild.channels.cache.find(
+    ch =>
+      ch.parentId === CATEGORIA_META_INDIVIDUAL &&
+      ch.type === ChannelType.GuildText &&
+      ch.topic?.includes(`USER:${member.id}`)
+  );
+  return byTopic || null;
+}
+
+// ==============================
+// CRIAR / ATUALIZAR CANAL
+// ==============================
+async function createOrUpdateMemberChannel(member) {
+  const data = loadData();
+  const entry = ensureMemberEntry(data, member);
+
+  const guild = member.guild;
+  const name = normalizeChannelName(member.displayName);
+
+  let channel = await findMemberChannel(guild, member);
+
+  const overwrites = [
+    {
+      id: guild.roles.everyone.id,
+      deny: ["ViewChannel"]
+    },
+    {
+      id: member.id,
+      allow: ["ViewChannel", "ReadMessageHistory"],
+      deny: ["SendMessages", "AddReactions"]
+    },
+    {
+      id: ROLE_CHEFE,
+      allow: ["ViewChannel", "ReadMessageHistory", "AddReactions"],
+      deny: ["SendMessages"]
+    },
+    {
+      id: ROLE_SUBCHEFE,
+      allow: ["ViewChannel", "ReadMessageHistory", "AddReactions"],
+      deny: ["SendMessages"]
+    },
+    {
+      id: client.user.id,
+      allow: ["ViewChannel", "SendMessages", "ReadMessageHistory", "ManageMessages", "AddReactions"]
+    }
+  ];
+
+  if (!channel) {
+    console.log(`🆕 Criar canal individual para ${member.user.tag}`);
+    channel = await guild.channels.create({
+      name,
+      type: ChannelType.GuildText,
+      parent: CATEGORIA_META_INDIVIDUAL,
+      permissionOverwrites: overwrites,
+      topic: `USER:${member.id}`
+    });
+  } else {
+    console.log(`♻️ Atualizar canal individual para ${member.user.tag}`);
+    await channel.edit({
+      name,
+      parent: CATEGORIA_META_INDIVIDUAL,
+      permissionOverwrites: overwrites,
+      topic: `USER:${member.id}`
+    }).catch(console.error);
+  }
+
+  entry.channelId = channel.id;
+  entry.serverName = member.displayName;
+  entry.username = member.user.username;
+
+  saveData(data);
+  await updateRegistryMessage(guild, member.id);
+}
+
+// ==============================
+// APAGAR CANAL
+// ==============================
+async function deleteMemberChannel(guild, userId) {
+  console.log(`🗑️ Apagar canal do ${userId}`);
+
+  const channel = guild.channels.cache.find(
+    ch =>
+      ch.parentId === CATEGORIA_META_INDIVIDUAL &&
+      ch.type === ChannelType.GuildText &&
+      (
+        ch.permissionOverwrites.cache.has(userId) ||
+        ch.topic?.includes(`USER:${userId}`)
+      )
+  );
+
+  if (!channel) {
+    console.log("❌ Canal não encontrado");
+  } else {
+    await channel.delete("Perdeu cargo Imperio ou saiu do servidor").catch(err => {
+      console.error("❌ Erro ao apagar:", err);
+    });
+    console.log("✅ Canal apagado");
+  }
+
+  const data = loadData();
+  if (data.members[userId]) {
+    data.members[userId].channelId = null;
+    saveData(data);
+    await updateRegistryMessage(guild, userId);
   }
 }
 
@@ -286,141 +429,6 @@ async function registerCommands() {
 }
 
 // ==============================
-// CANAIS INDIVIDUAIS
-// ==============================
-async function findMemberChannel(guild, member) {
-  const data = loadData();
-  const entry = data.members[member.id];
-
-  if (entry?.channelId) {
-    const byId = await guild.channels.fetch(entry.channelId).catch(() => null);
-    if (byId) return byId;
-  }
-
-  const desiredName = normalizeChannelName(member.displayName);
-
-  const found = guild.channels.cache.find(
-    ch =>
-      ch.parentId === CATEGORIA_META_INDIVIDUAL &&
-      ch.type === ChannelType.GuildText &&
-      ch.name === desiredName
-  );
-
-  if (found) return found;
-
-  const foundByPermission = guild.channels.cache.find(ch => {
-    if (ch.parentId !== CATEGORIA_META_INDIVIDUAL) return false;
-    if (ch.type !== ChannelType.GuildText) return false;
-    return ch.permissionOverwrites.cache.has(member.id);
-  });
-
-  return foundByPermission || null;
-}
-
-async function createOrUpdateMemberChannel(member) {
-  const data = loadData();
-  const entry = ensureMemberEntry(data, member);
-
-  const guild = member.guild;
-  const desiredName = normalizeChannelName(member.displayName);
-
-  let channel = await findMemberChannel(guild, member);
-
-  const overwrites = [
-    {
-      id: guild.roles.everyone.id,
-      deny: ["ViewChannel"]
-    },
-    {
-      id: member.id,
-      allow: ["ViewChannel", "ReadMessageHistory"],
-      deny: ["SendMessages", "AddReactions"]
-    },
-    {
-      id: ROLE_CHEFE,
-      allow: ["ViewChannel", "ReadMessageHistory", "AddReactions"],
-      deny: ["SendMessages"]
-    },
-    {
-      id: ROLE_SUBCHEFE,
-      allow: ["ViewChannel", "ReadMessageHistory", "AddReactions"],
-      deny: ["SendMessages"]
-    },
-    {
-      id: client.user.id,
-      allow: ["ViewChannel", "SendMessages", "ReadMessageHistory", "ManageMessages", "AddReactions"]
-    }
-  ];
-
-  if (!channel) {
-    console.log(`➡️ A criar canal individual para ${member.user.tag}`);
-    channel = await guild.channels.create({
-      name: desiredName,
-      type: ChannelType.GuildText,
-      parent: CATEGORIA_META_INDIVIDUAL,
-      permissionOverwrites: overwrites,
-      topic: `Canal de meta individual de ${member.displayName} | USER:${member.id}`
-    });
-  } else {
-    console.log(`➡️ A atualizar canal individual para ${member.user.tag}`);
-    await channel.edit({
-      name: desiredName,
-      parent: CATEGORIA_META_INDIVIDUAL,
-      topic: `Canal de meta individual de ${member.displayName} | USER:${member.id}`,
-      permissionOverwrites: overwrites
-    }).catch(console.error);
-  }
-
-  entry.channelId = channel.id;
-  entry.serverName = member.displayName;
-  entry.username = member.user.username;
-
-  saveData(data);
-  await updateRegistryMessage(guild, member.id);
-}
-
-async function deleteMemberChannel(guild, userId) {
-  const data = loadData();
-  const entry = data.members[userId];
-
-  console.log(`🗑️ A tentar apagar canal do utilizador ${userId}`);
-
-  let channel = null;
-
-  if (entry?.channelId) {
-    channel = await guild.channels.fetch(entry.channelId).catch(() => null);
-  }
-
-  if (!channel) {
-    channel = guild.channels.cache.find(ch => {
-      if (ch.parentId !== CATEGORIA_META_INDIVIDUAL) return false;
-      if (ch.type !== ChannelType.GuildText) return false;
-      if (ch.permissionOverwrites.cache.has(userId)) return true;
-
-      const topic = ch.topic || "";
-      if (topic.includes(`USER:${userId}`)) return true;
-
-      return false;
-    });
-  }
-
-  if (channel) {
-    await channel.delete("Perdeu cargo Imperio ou saiu do servidor").catch(err => {
-      console.error("❌ Erro ao apagar canal:", err);
-    });
-    console.log("✅ Canal apagado");
-  } else {
-    console.log("❌ Canal não encontrado para apagar");
-  }
-
-  if (entry) {
-    entry.channelId = null;
-    saveData(data);
-    await updateRegistryMessage(guild, userId);
-  }
-}
-
-// ==============================
 // META ATIVA / LOGS
 // ==============================
 function getEffectiveStatus(participant) {
@@ -455,7 +463,6 @@ function buildMetaLog(meta) {
   const lines = [];
   lines.push(`📅 Meta — ${formatDate(meta.startedAt)} → ${meta.endedAt ? formatDate(meta.endedAt) : "-"}`);
   lines.push("");
-
   lines.push("✅ Entregou");
   if (entregou.length === 0) {
     lines.push("- Nenhum");
@@ -862,7 +869,7 @@ async function handleLimparMetaTrabalhador(interaction) {
 }
 
 // ==============================
-// FECHO DE META
+// FECHAR META
 // ==============================
 async function handleFimMeta(interaction) {
   const data = loadData();
@@ -951,15 +958,12 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
 // ==============================
 client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
   try {
-    const hadImperio = oldMember.roles.cache.has(ROLE_IMPERIO);
-    const hasImperio = newMember.roles.cache.has(ROLE_IMPERIO);
+    const had = oldMember.roles.cache.has(ROLE_IMPERIO);
+    const has = newMember.roles.cache.has(ROLE_IMPERIO);
 
-    console.log(`🔄 GuildMemberUpdate: ${newMember.user.tag}`);
-    console.log(`Antes tinha Império? ${hadImperio}`);
-    console.log(`Agora tem Império? ${hasImperio}`);
+    console.log(`🔄 ${newMember.user.tag}: ${had} -> ${has}`);
 
-    if (!hadImperio && hasImperio) {
-      console.log("➡️ Recebeu cargo Império, a criar/atualizar canal...");
+    if (!had && has) {
       const data = loadData();
       const entry = ensureMemberEntry(data, newMember);
       entry.receivedImperioAt = nowISO();
@@ -968,21 +972,16 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
       saveData(data);
 
       await createOrUpdateMemberChannel(newMember);
-      console.log("✅ Canal individual criado/atualizado");
       return;
     }
 
-    if (hadImperio && !hasImperio) {
-      console.log("➡️ Perdeu cargo Império, a apagar canal...");
+    if (had && !has) {
       await deleteMemberChannel(newMember.guild, newMember.id);
-      console.log("✅ Processo de apagar canal terminado");
       return;
     }
 
-    if (hasImperio && oldMember.displayName !== newMember.displayName) {
-      console.log("➡️ Nome alterado, a atualizar canal...");
+    if (has && oldMember.displayName !== newMember.displayName) {
       await createOrUpdateMemberChannel(newMember);
-      console.log("✅ Nome do canal atualizado");
     }
   } catch (err) {
     console.error("❌ Erro em GuildMemberUpdate:", err);
@@ -991,7 +990,6 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
 
 client.on(Events.GuildMemberRemove, async member => {
   try {
-    console.log(`👋 GuildMemberRemove: ${member.user.tag}`);
     await deleteMemberChannel(member.guild, member.id);
   } catch (err) {
     console.error("❌ Erro em GuildMemberRemove:", err);
@@ -1051,19 +1049,15 @@ client.on(Events.InteractionCreate, async interaction => {
     console.error("❌ Erro em InteractionCreate:", err);
 
     if (interaction.deferred || interaction.replied) {
-      return interaction
-        .editReply({
-          content: "❌ Ocorreu um erro ao executar o comando."
-        })
-        .catch(() => {});
+      return interaction.editReply({
+        content: "❌ Ocorreu um erro ao executar o comando."
+      }).catch(() => {});
     }
 
-    return interaction
-      .reply({
-        content: "❌ Ocorreu um erro ao executar o comando.",
-        ephemeral: true
-      })
-      .catch(() => {});
+    return interaction.reply({
+      content: "❌ Ocorreu um erro ao executar o comando.",
+      ephemeral: true
+    }).catch(() => {});
   }
 });
 
@@ -1071,12 +1065,12 @@ client.on(Events.InteractionCreate, async interaction => {
 // READY
 // ==============================
 client.once(Events.ClientReady, async () => {
-  console.log(`✅ Bot ligado como ${client.user.tag}`);
+  console.log(`✅ ${client.user.tag} online`);
   await registerCommands();
 });
 
 // ==============================
-// ARRANQUE
+// START
 // ==============================
 if (!TOKEN) {
   console.error("❌ BOT_TOKEN não definido.");
@@ -1094,5 +1088,5 @@ if (!GUILD_ID) {
 }
 
 client.login(TOKEN).catch(err => {
-  console.error("❌ Erro no login do bot:", err);
+  console.error("❌ Erro no login:", err);
 });
