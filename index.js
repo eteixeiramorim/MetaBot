@@ -14,6 +14,17 @@ import path from "path";
 import http from "http";
 
 // ==============================
+// LOGS GLOBAIS
+// ==============================
+process.on("uncaughtException", err => {
+  console.error("❌ uncaughtException:", err);
+});
+
+process.on("unhandledRejection", err => {
+  console.error("❌ unhandledRejection:", err);
+});
+
+// ==============================
 // WEB SERVER (RENDER)
 // ==============================
 const PORT = process.env.PORT || 10000;
@@ -61,9 +72,11 @@ function defaultData() {
   };
 }
 
-function readDataFile() {
+function loadDataFromFile() {
   try {
-    if (!fs.existsSync(DATA_FILE)) return defaultData();
+    if (!fs.existsSync(DATA_FILE)) {
+      return defaultData();
+    }
     return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
   } catch (err) {
     console.error("❌ Erro a ler metabot-data.json:", err);
@@ -71,11 +84,16 @@ function readDataFile() {
   }
 }
 
-const DB = readDataFile();
+const DB = loadDataFromFile();
 
-function saveData() {
+function saveData(reason = "sem motivo") {
   try {
     fs.writeFileSync(DATA_FILE, JSON.stringify(DB, null, 2), "utf8");
+    console.log(
+      `💾 saveData (${reason}) | activeMeta=${
+        DB.activeMeta ? DB.activeMeta.id : "null"
+      }`
+    );
   } catch (err) {
     console.error("❌ Erro a gravar metabot-data.json:", err);
   }
@@ -166,7 +184,9 @@ function buildRegistryMessage(entry) {
     `Nome utilizador: ${entry.username}`,
     `ID: ${entry.userId}`,
     `Canal: ${entry.channelId ? `<#${entry.channelId}>` : "-"}`,
-    `Recebeu cargo Imperio: ${entry.receivedImperioAt ? formatDate(entry.receivedImperioAt) : "-"}`,
+    `Recebeu cargo Imperio: ${
+      entry.receivedImperioAt ? formatDate(entry.receivedImperioAt) : "-"
+    }`,
     `Ultima meta: ${entry.lastMetaAt ? formatDate(entry.lastMetaAt) : "-"}`
   ].join("\n");
 }
@@ -191,7 +211,7 @@ async function updateRegistryMessage(guild, userId) {
   const nova = await canal.send(content).catch(console.error);
   if (nova) {
     entry.registryMessageId = nova.id;
-    saveData();
+    saveData("updateRegistryMessage nova mensagem");
   }
 }
 
@@ -263,7 +283,13 @@ async function createOrUpdateMemberChannel(member) {
     },
     {
       id: client.user.id,
-      allow: ["ViewChannel", "SendMessages", "ReadMessageHistory", "ManageMessages", "AddReactions"]
+      allow: [
+        "ViewChannel",
+        "SendMessages",
+        "ReadMessageHistory",
+        "ManageMessages",
+        "AddReactions"
+      ]
     }
   ];
 
@@ -278,19 +304,21 @@ async function createOrUpdateMemberChannel(member) {
     });
   } else {
     console.log(`♻️ Atualizar canal individual para ${member.user.tag}`);
-    await channel.edit({
-      name,
-      parent: CATEGORIA_META_INDIVIDUAL,
-      permissionOverwrites: overwrites,
-      topic: `USER:${member.id}`
-    }).catch(console.error);
+    await channel
+      .edit({
+        name,
+        parent: CATEGORIA_META_INDIVIDUAL,
+        permissionOverwrites: overwrites,
+        topic: `USER:${member.id}`
+      })
+      .catch(console.error);
   }
 
   entry.channelId = channel.id;
   entry.serverName = member.displayName;
   entry.username = member.user.username;
 
-  saveData();
+  saveData("createOrUpdateMemberChannel");
   await updateRegistryMessage(guild, member.id);
 }
 
@@ -301,24 +329,24 @@ async function deleteMemberChannel(guild, userId) {
     ch =>
       ch.parentId === CATEGORIA_META_INDIVIDUAL &&
       ch.type === ChannelType.GuildText &&
-      (
-        ch.permissionOverwrites.cache.has(userId) ||
-        ch.topic?.includes(`USER:${userId}`)
-      )
+      (ch.permissionOverwrites.cache.has(userId) ||
+        ch.topic?.includes(`USER:${userId}`))
   );
 
   if (!channel) {
     console.log("❌ Canal não encontrado");
   } else {
-    await channel.delete("Perdeu cargo Imperio ou saiu do servidor").catch(err => {
-      console.error("❌ Erro ao apagar:", err);
-    });
+    await channel
+      .delete("Perdeu cargo Imperio ou saiu do servidor")
+      .catch(err => {
+        console.error("❌ Erro ao apagar:", err);
+      });
     console.log("✅ Canal apagado");
   }
 
   if (DB.members[userId]) {
     DB.members[userId].channelId = null;
-    saveData();
+    saveData("deleteMemberChannel");
     await updateRegistryMessage(guild, userId);
   }
 }
@@ -333,26 +361,39 @@ const commands = [
     .addSubcommand(sub =>
       sub
         .setName("global")
-        .setDescription("Envia a meta para todos os canais individuais e abre a meta")
+        .setDescription(
+          "Envia a meta para todos os canais individuais e abre a meta"
+        )
         .addStringOption(opt =>
           opt.setName("texto").setDescription("Texto da meta").setRequired(true)
         )
         .addAttachmentOption(opt =>
-          opt.setName("imagem").setDescription("Imagem opcional").setRequired(false)
+          opt
+            .setName("imagem")
+            .setDescription("Imagem opcional")
+            .setRequired(false)
         )
     )
     .addSubcommand(sub =>
       sub
         .setName("individual")
-        .setDescription("Envia a meta para uma pessoa e adiciona aos logs da meta ativa")
+        .setDescription(
+          "Envia a meta para uma pessoa e adiciona aos logs da meta ativa"
+        )
         .addUserOption(opt =>
-          opt.setName("pessoa").setDescription("Pessoa alvo").setRequired(true)
+          opt
+            .setName("pessoa")
+            .setDescription("Pessoa alvo")
+            .setRequired(true)
         )
         .addStringOption(opt =>
           opt.setName("texto").setDescription("Texto da meta").setRequired(true)
         )
         .addAttachmentOption(opt =>
-          opt.setName("imagem").setDescription("Imagem opcional").setRequired(false)
+          opt
+            .setName("imagem")
+            .setDescription("Imagem opcional")
+            .setRequired(false)
         )
     )
     .addSubcommand(sub =>
@@ -363,7 +404,10 @@ const commands = [
           opt.setName("texto").setDescription("Texto da meta").setRequired(true)
         )
         .addAttachmentOption(opt =>
-          opt.setName("imagem").setDescription("Imagem opcional").setRequired(false)
+          opt
+            .setName("imagem")
+            .setDescription("Imagem opcional")
+            .setRequired(false)
         )
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -391,11 +435,16 @@ const commands = [
             .setName("individual")
             .setDescription("Limpa a última meta individual de uma pessoa")
             .addUserOption(opt =>
-              opt.setName("pessoa").setDescription("Pessoa alvo").setRequired(true)
+              opt
+                .setName("pessoa")
+                .setDescription("Pessoa alvo")
+                .setRequired(true)
             )
         )
         .addSubcommand(sub =>
-          sub.setName("trabalhador").setDescription("Limpa a última meta dos trabalhadores")
+          sub
+            .setName("trabalhador")
+            .setDescription("Limpa a última meta dos trabalhadores")
         )
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -446,12 +495,22 @@ function ensureActiveMetaParticipant(meta, memberEntry) {
 function buildMetaLog(meta) {
   const participantes = Object.values(meta.participants);
 
-  const entregou = participantes.filter(p => getEffectiveStatus(p) === "entregou");
-  const naoEntregou = participantes.filter(p => getEffectiveStatus(p) === "nao_entregou");
-  const pendente = participantes.filter(p => getEffectiveStatus(p) === "pendente");
+  const entregou = participantes.filter(
+    p => getEffectiveStatus(p) === "entregou"
+  );
+  const naoEntregou = participantes.filter(
+    p => getEffectiveStatus(p) === "nao_entregou"
+  );
+  const pendente = participantes.filter(
+    p => getEffectiveStatus(p) === "pendente"
+  );
 
   const lines = [];
-  lines.push(`📅 Meta — ${formatDate(meta.startedAt)} → ${meta.endedAt ? formatDate(meta.endedAt) : "-"}`);
+  lines.push(
+    `📅 Meta — ${formatDate(meta.startedAt)} → ${
+      meta.endedAt ? formatDate(meta.endedAt) : "-"
+    }`
+  );
   lines.push("");
 
   lines.push("✅ Entregou");
@@ -482,7 +541,10 @@ function buildMetaLog(meta) {
 
 async function createOrUpdateMetaLogMessage(guild) {
   const meta = DB.activeMeta;
-  if (!meta) return;
+  if (!meta) {
+    console.log("ℹ️ createOrUpdateMetaLogMessage sem activeMeta");
+    return;
+  }
 
   const canal = await guild.channels.fetch(CANAL_LOGS_META).catch(() => null);
   if (!canal || !canal.isTextBased()) return;
@@ -493,6 +555,7 @@ async function createOrUpdateMetaLogMessage(guild) {
     const msg = await canal.messages.fetch(meta.logMessageId).catch(() => null);
     if (msg) {
       await msg.edit(content).catch(console.error);
+      console.log("📝 Log de meta editado");
       return;
     }
   }
@@ -500,7 +563,8 @@ async function createOrUpdateMetaLogMessage(guild) {
   const nova = await canal.send(content).catch(console.error);
   if (nova) {
     meta.logMessageId = nova.id;
-    saveData();
+    saveData("createOrUpdateMetaLogMessage nova");
+    console.log("📝 Log de meta criado");
   }
 }
 
@@ -520,6 +584,8 @@ async function handleMetaGlobal(interaction) {
   const imagem = interaction.options.getAttachment("imagem");
   const guild = interaction.guild;
 
+  console.log("➡️ /meta global");
+
   if (DB.activeMeta && !DB.activeMeta.endedAt) {
     return interaction.reply({
       content: "❌ Já existe uma meta ativa. Usa /fim meta antes de abrir outra.",
@@ -536,10 +602,12 @@ async function handleMetaGlobal(interaction) {
     items: [],
     participants: {}
   };
-  saveData();
+  saveData("/meta global criou activeMeta");
 
   const canalMeta = await guild.channels.fetch(CANAL_META).catch(() => null);
   if (!canalMeta || !canalMeta.isTextBased()) {
+    DB.activeMeta = null;
+    saveData("/meta global rollback canal meta");
     return interaction.reply({
       content: "❌ Não consegui aceder ao canal meta.",
       ephemeral: true
@@ -549,7 +617,7 @@ async function handleMetaGlobal(interaction) {
   const mainMsg = await sendMetaMessage(canalMeta, texto, imagem).catch(() => null);
   if (!mainMsg) {
     DB.activeMeta = null;
-    saveData();
+    saveData("/meta global rollback enviar principal");
     return interaction.reply({
       content: "❌ Não consegui enviar a meta no canal principal.",
       ephemeral: true
@@ -583,7 +651,7 @@ async function handleMetaGlobal(interaction) {
     const participant = ensureActiveMetaParticipant(DB.activeMeta, entry);
     participant.messageIds.push(msg.id);
     entry.lastMetaAt = nowISO();
-    saveData();
+    saveData("/meta global participant");
     await updateRegistryMessage(guild, member.id);
   }
 
@@ -593,7 +661,7 @@ async function handleMetaGlobal(interaction) {
     mainMessageId: mainMsg.id
   });
 
-  saveData();
+  saveData("/meta global final");
   await createOrUpdateMetaLogMessage(guild);
 
   return interaction.reply({
@@ -607,6 +675,8 @@ async function handleMetaIndividual(interaction) {
   const texto = interaction.options.getString("texto", true);
   const imagem = interaction.options.getAttachment("imagem");
   const guild = interaction.guild;
+
+  console.log("➡️ /meta individual");
 
   if (!DB.activeMeta || DB.activeMeta.endedAt) {
     return interaction.reply({
@@ -675,7 +745,7 @@ async function handleMetaIndividual(interaction) {
   });
 
   entry.lastMetaAt = nowISO();
-  saveData();
+  saveData("/meta individual final");
 
   await updateRegistryMessage(guild, member.id);
   await createOrUpdateMetaLogMessage(guild);
@@ -691,10 +761,19 @@ async function handleMetaTrabalhador(interaction) {
   const imagem = interaction.options.getAttachment("imagem");
   const guild = interaction.guild;
 
-  const canalMeta = await guild.channels.fetch(CANAL_META).catch(() => null);
-  const canalTrabalhador = await guild.channels.fetch(CANAL_META_TRABALHADOR).catch(() => null);
+  console.log("➡️ /meta trabalhador");
 
-  if (!canalMeta || !canalMeta.isTextBased() || !canalTrabalhador || !canalTrabalhador.isTextBased()) {
+  const canalMeta = await guild.channels.fetch(CANAL_META).catch(() => null);
+  const canalTrabalhador = await guild.channels
+    .fetch(CANAL_META_TRABALHADOR)
+    .catch(() => null);
+
+  if (
+    !canalMeta ||
+    !canalMeta.isTextBased() ||
+    !canalTrabalhador ||
+    !canalTrabalhador.isTextBased()
+  ) {
     return interaction.reply({
       content: "❌ Não consegui aceder aos canais necessários.",
       ephemeral: true
@@ -704,7 +783,9 @@ async function handleMetaTrabalhador(interaction) {
   const mainText = `👷 Meta trabalhador\n\n${texto}`;
 
   const mainMsg = await sendMetaMessage(canalMeta, mainText, imagem).catch(() => null);
-  const workerMsg = await sendMetaMessage(canalTrabalhador, texto, imagem).catch(() => null);
+  const workerMsg = await sendMetaMessage(canalTrabalhador, texto, imagem).catch(
+    () => null
+  );
 
   if (!mainMsg || !workerMsg) {
     return interaction.reply({
@@ -717,7 +798,7 @@ async function handleMetaTrabalhador(interaction) {
     mainMessageId: mainMsg.id,
     workerMessageId: workerMsg.id
   };
-  saveData();
+  saveData("/meta trabalhador");
 
   return interaction.reply({
     content: "✅ Meta trabalhador enviada.",
@@ -769,7 +850,7 @@ async function handleLimparMetaGlobal(interaction) {
   }
 
   meta.items = meta.items.filter(i => i !== globalItem);
-  saveData();
+  saveData("/limpar meta global");
   await createOrUpdateMetaLogMessage(guild);
 
   return interaction.reply({
@@ -812,11 +893,13 @@ async function handleLimparMetaIndividual(interaction) {
 
   const participant = meta.participants[user.id];
   if (participant) {
-    participant.messageIds = participant.messageIds.filter(id => id !== item.childMessageId);
+    participant.messageIds = participant.messageIds.filter(
+      id => id !== item.childMessageId
+    );
   }
 
   meta.items = meta.items.filter(i => i !== item);
-  saveData();
+  saveData("/limpar meta individual");
   await createOrUpdateMetaLogMessage(guild);
 
   return interaction.reply({
@@ -835,13 +918,15 @@ async function handleLimparMetaTrabalhador(interaction) {
 
   const guild = interaction.guild;
   const canalMeta = await guild.channels.fetch(CANAL_META).catch(() => null);
-  const canalTrab = await guild.channels.fetch(CANAL_META_TRABALHADOR).catch(() => null);
+  const canalTrab = await guild.channels
+    .fetch(CANAL_META_TRABALHADOR)
+    .catch(() => null);
 
   await deleteMessageSafe(canalMeta, DB.lastWorkerDispatch.mainMessageId);
   await deleteMessageSafe(canalTrab, DB.lastWorkerDispatch.workerMessageId);
 
   DB.lastWorkerDispatch = null;
-  saveData();
+  saveData("/limpar meta trabalhador");
 
   return interaction.reply({
     content: "✅ Meta trabalhador limpa.",
@@ -853,6 +938,10 @@ async function handleLimparMetaTrabalhador(interaction) {
 // FECHAR META
 // ==============================
 async function handleFimMeta(interaction) {
+  console.log(
+    `➡️ /fim meta | activeMeta=${DB.activeMeta ? DB.activeMeta.id : "null"}`
+  );
+
   if (!DB.activeMeta || DB.activeMeta.endedAt) {
     return interaction.reply({
       content: "❌ Não existe meta ativa para fechar.",
@@ -861,7 +950,7 @@ async function handleFimMeta(interaction) {
   }
 
   DB.activeMeta.endedAt = nowISO();
-  saveData();
+  saveData("/fim meta");
   await createOrUpdateMetaLogMessage(interaction.guild);
 
   return interaction.reply({
@@ -875,7 +964,10 @@ async function handleFimMeta(interaction) {
 // ==============================
 async function updateReactionVote(reaction, userId, action) {
   const meta = DB.activeMeta;
-  if (!meta || meta.endedAt) return;
+  if (!meta || meta.endedAt) {
+    console.log("ℹ️ updateReactionVote sem meta ativa");
+    return;
+  }
 
   const emoji = reaction.emoji.name;
   if (emoji !== "✅" && emoji !== "❌") return;
@@ -893,11 +985,21 @@ async function updateReactionVote(reaction, userId, action) {
   const ownerEntry = Object.values(DB.members).find(
     entry => entry.channelId === reaction.message.channelId
   );
-  if (!ownerEntry) return;
+  if (!ownerEntry) {
+    console.log("❌ Não encontrei ownerEntry pelo channelId");
+    return;
+  }
 
   const participant = meta.participants[ownerEntry.userId];
-  if (!participant) return;
-  if (!participant.messageIds.includes(reaction.message.id)) return;
+  if (!participant) {
+    console.log("❌ Não encontrei participant para o utilizador");
+    return;
+  }
+
+  if (!participant.messageIds.includes(reaction.message.id)) {
+    console.log("❌ A mensagem reagida não está associada ao participant");
+    return;
+  }
 
   const voteValue = emoji === "✅" ? "entregou" : "nao_entregou";
   const voterKey = member.roles.cache.has(ROLE_CHEFE) ? "chefe" : "subchefe";
@@ -908,7 +1010,11 @@ async function updateReactionVote(reaction, userId, action) {
     participant.votes[voterKey] = null;
   }
 
-  saveData();
+  console.log(
+    `📝 Reação atualizada | user=${ownerEntry.userId} | voter=${voterKey} | value=${participant.votes[voterKey]}`
+  );
+
+  saveData(`reaction ${action}`);
   await createOrUpdateMetaLogMessage(reaction.message.guild);
 }
 
@@ -947,7 +1053,7 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
       entry.receivedImperioAt = nowISO();
       entry.serverName = newMember.displayName;
       entry.username = newMember.user.username;
-      saveData();
+      saveData("GuildMemberUpdate ganhou imperio");
 
       await createOrUpdateMemberChannel(newMember);
       return;
@@ -1019,23 +1125,30 @@ client.on(Events.InteractionCreate, async interaction => {
       const group = interaction.options.getSubcommandGroup();
       const sub = interaction.options.getSubcommand();
 
-      if (group === "meta" && sub === "global") return handleLimparMetaGlobal(interaction);
-      if (group === "meta" && sub === "individual") return handleLimparMetaIndividual(interaction);
-      if (group === "meta" && sub === "trabalhador") return handleLimparMetaTrabalhador(interaction);
+      if (group === "meta" && sub === "global")
+        return handleLimparMetaGlobal(interaction);
+      if (group === "meta" && sub === "individual")
+        return handleLimparMetaIndividual(interaction);
+      if (group === "meta" && sub === "trabalhador")
+        return handleLimparMetaTrabalhador(interaction);
     }
   } catch (err) {
     console.error("❌ Erro em InteractionCreate:", err);
 
     if (interaction.deferred || interaction.replied) {
-      return interaction.editReply({
-        content: "❌ Ocorreu um erro ao executar o comando."
-      }).catch(() => {});
+      return interaction
+        .editReply({
+          content: "❌ Ocorreu um erro ao executar o comando."
+        })
+        .catch(() => {});
     }
 
-    return interaction.reply({
-      content: "❌ Ocorreu um erro ao executar o comando.",
-      ephemeral: true
-    }).catch(() => {});
+    return interaction
+      .reply({
+        content: "❌ Ocorreu um erro ao executar o comando.",
+        ephemeral: true
+      })
+      .catch(() => {});
   }
 });
 
@@ -1044,6 +1157,9 @@ client.on(Events.InteractionCreate, async interaction => {
 // ==============================
 client.once(Events.ClientReady, async () => {
   console.log(`✅ ${client.user.tag} online`);
+  console.log(
+    `📦 Estado inicial | activeMeta=${DB.activeMeta ? DB.activeMeta.id : "null"}`
+  );
   await registerCommands();
 });
 
